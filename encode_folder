@@ -2,38 +2,45 @@
 
 var       fs = require( 'fs' )
   ,     path = require( 'path' )
-  ,    spawn = require( 'child_process' ).spawn
+  ,    child = require( 'child_process' )
+  ,    spawn = child.spawn
 
   ,  program = require( 'commander' )
-  , Progress = require( 'progress' )
+  ,    charm = require( 'charm' )( process )
   ,   colors = require( 'colors/colors' )
 
   ,     exts = '3g2,3gp,aepx,ale,asf,asx,avi,avp,avs,bdm,bik,bsf,camproj,cpi,divx,dmsm,dream,dvdmedia,dvr-ms,dzm,dzp,edl,f4v,fbr,fcproject,flv,hdmov,imovieproj,m2p,m4v,mkv,mod,moi,mov,mp4,mpeg,mpg,mts,mxf,ogv,pds,prproj,psh,r3d,rcproject,rm,rmvb,scm,smil,sqz,srt,stx,swf,swi,tix,trp,ts,veg,vf,vob,vro,webm,wlmp,wmv,wtv,xvid,yuv'
   , toEncode = []
-  , folder, progressBar;
+  ,    chrOk = String.fromCharCode( 10003 )
+  ,  chrFail = String.fromCharCode( 10007 )
+  , folder, progressBar, extRx, activeEncoder;
 
-
+/**
+ * Program Options
+ **/
 program
 	.version( '0.1' )
 	.usage  ( '[options] folder' )
 
 	.option ( '-R, --recursive'                , 'Recursively scan directory' )
 	.option ( '-d, --delete'                   , 'Delete the original video on successful encoding' )
+	.option ( '-f, --force'                    , 'Force over-write of existing files' )
+	.option ( '-k, --keep'                     , 'Keep partially encoded files from encoding failures' )
+	.option ( '-w, --watch'                    , 'Watch the folder indefinitely for new video files' )
 	.option ( '-Z, --preset       <name>'      , 'Handbrake video preset (default: Normal)' )
 	.option ( '-H, --handbrake    <path>'      , 'Path to handbrake-cli (default: /Applications/HandBrakeCLI)' )
 	.option ( '-c, --cpu          <count>'     , 'Set CPU count (default: autodetected)', parseInt )
-	.option ( '-x, --extensions   <extensions>', 'Comma-separated list of file extensions to process (default: [long list] - outputext)')
+	.option ( '-x, --extensions   <extensions>', 'Comma-separated list of file extensions to process (default: [long list])')
 	.option ( '-X, --outputext    <ext>'       , 'Extension for generated files (default: m4v)' )
 	.option ( '-O, --outputfolder <folder>'    , 'Folder in which to place completed videos (default: same-as-original)' )
 
 	.parse  ( process.argv );
 
 
-folder = program.args[0];
-
-if( !folder || ( program.args.length > 1 ) ){
-	console.log( program.helpInformation() );
-}else {
+/**
+ * Process arguments and start folder scan
+ **/
+process.nextTick( function(){
 	folder = resolve( folder );
 
 	program.outputext || ( program.outputext = 'm4v'                        );
@@ -42,10 +49,8 @@ if( !folder || ( program.args.length > 1 ) ){
 
 	if( !path.existsSync( program.handbrake ) ){ die( 'HandBrakeCLI not found' ); }
 
-	var extRx = new RegExp( '\\.(' + 
+	extRx = new RegExp( '\\.(' + 
 		( program.extensions || exts )
-			.replace( new RegExp( '(^' + program.outputext + ',|,' + program.outputext + '$)' ), '' )
-			.replace( ',' + program.outputext + ',', ',' )
 			.replace( /,/g, '|' )
 		 + ')$' );
 
@@ -55,15 +60,40 @@ if( !folder || ( program.args.length > 1 ) ){
 
 	scan( folder, program.recursive );
 	encode();
+});
+
+
+folder = program.args[0];
+
+
+/**
+ * Display help when invalid arguments are passed in
+ **/
+if( !folder || ( program.args.length > 1 ) ){
+	console.error( program.helpInformation() );
+	die();
 }
 
 
+/**
+ * Watch for process exit
+ **/
+process.on( 'exit', function(){
+	activeEncoder && activeEncoder.abandon();
+});
+
+
+/**
+ * Kill app with an optional death message
+ **/
 function die( msg ){
-	console.error( msg );
+	msg && console.error( msg.red );
 	process.exit();
 }	
 
-
+/**
+ * Resolve a folder or die
+ **/
 function resolve( folder ){
 	if( folder.indexOf( '/' ) ){
 		folder = path.join( __dirname, folder );	
@@ -79,6 +109,9 @@ function resolve( folder ){
 }
 
 
+/**
+ * Scan folder seeking out any video files
+ **/
 function scan( folder, recursive ){
 	var files = fs.readdirSync( folder );
 
@@ -95,67 +128,167 @@ function scan( folder, recursive ){
 			}
 		}
 	}
+
+	if( program.watch ){
+		setTimeout( function(){
+			scan( folder, recursive );
+			encode();
+		}, 3E5 ); // re-scan every 5 minutes
+	}
 }
 
 
+/**
+ * Add video file to queue
+ **/
 function addFile( path ){
 	toEncode.push( path );
 	console.log( 'Found File: '.green + path.green.underline );
 }
 
 
+/**
+ * Encode next file in queue
+ **/
 function encode(){
+	// wait your turn!
+	if( activeEncoder && activeEncoder.running ){ return ; }
+
 	if( !toEncode.length ){
-		console.log( 'Done!'.green );
 		return;
 	}
 
-	progressBar = new Progress( '  [:bar] :percent :etas', {
-		    complete : '='
-		, incomplete : ' '
-		,      width : 50
-		,      total : 100
-	});
-
-	new Encoder( toEncode.shift() );
+	activeEncoder = new Encoder( toEncode.shift() );
 }
 
 
+/**
+ * Core Prototypes
+ **/
+String.prototype.times = function( n ){
+	return new Array( n+1 ).join( this );
+};
+
+Number.prototype.toPercent = function(){
+	return (
+		 + ( 0|this )
+		 + '.'
+		 + (( 0|this%1*10 ) || '0' )
+		 + '%'
+	);
+};
+
+Number.prototype.toTimeString = function(){
+	var s = 0|this/1000
+	  , m = 0|s/60%60
+	  , h = 0|s/3600
+	  , s = s%60;
+
+	return (
+		h ? h + ':' + ( 100 + m ).toString().substr(1) + ':' + ( 100 + s ).toString().substr(1) :
+		m ? m + ':' + ( 100 + s ).toString().substr(1)                                          :
+		s + 's'
+	);
+};
+
+
+/**
+ * File encoder
+ **/
 function Encoder( fPath ){
-	var sPath = fPath.split( '/' )
-	  ,  name = /^(.*\.)([^\.]+)$/.exec( sPath.pop() )
-	  ,  base = name[ 1 ]
-	  ,   ext = name[ 2 ]
-	  ,  args = []
-	  ,  done = 0;
+	this.startTime = Date.now();
+	this.inPath    = fPath;
+	this.inFile    = fPath.replace( folder, '' );
+	this.inFolder  = fPath.replace( /[\/\\][^\/\\]+$/, '' );
+	this.outPath   = path.join( program.outputfolder || this.inFolder, this.inFile.replace( /\.[^\.]+$/, '' ) + '.' + program.outputext );
 
-	sPath[0] = '/';
+	charm.write( 'Encoding: ' + this.inFile + ' ' );
 
-	console.log( 'Encoding: '.yellow + fPath.yellow.underline );
+	if( this.inPath === this.outPath ){
+		return this.abandon( 'Infile & Outfile are the same' );
+	}
+	if( !program.force && path.existsSync( this.outPath ) ){
+		return this.abandon( 'Destination file already exists' );
+	}
 
-	args.push( '-Z', program.preset );
+	this.drawProgress();
+
+	var args = [];
+
 	if( program.cpu ){ args.push( '-c', program.cpu ); }
-	args.push( '-i', fPath );
-	args.push( '-o', path.join.apply( path, [].concat( program.outputfolder || sPath ).concat( base + program.outputext ) ) );
+	args.push( '-Z', program.preset );
+	args.push( '-i', this.inPath  );
+	args.push( '-o', this.outPath );
 
-	encoder = spawn( program.handbrake, args );
-	encoder.stdout.on( 'data', function( data ){
-		var pDone = parseFloat( /([\.0-9]+) %/.exec( data.toString() ) ),
-		     diff = pDone - done;
+	this.started = true;
+	this.encoder = spawn( program.handbrake, args );
+	this.encoder.stdout.on( 'data', this.onChildData.bind( this ) );
+	this.encoder       .on( 'exit', this.onChildExit.bind( this ) );
+}
 
-		progressBar.tick( diff );
-		done = pDone;
-	});
+Encoder.prototype = {
+	drawProgress : function( p ){
+		p || ( p = 0 );
+		var str = '  [' + '#'.times( 0|p/5 ) + ' '.times( 0|(104.99-p)/5 ) + '] ' + p.toPercent() + '  ETA: ' + ( ( Date.now() - this.startTime ) * ( 100 / p - 1 ) ).toTimeString();
+		charm.write( str );
+		this.charmLen = str.length;
+		return this;
+	}
 
-	encoder.on( 'exit', function( code ){
+	, clearProgress : function(){
+		charm.left( this.charmLen || 0 ).erase( 'end' );
+		return this;
+	}
+
+	, onChildData : function( data ){
+		var pDone = parseFloat( /([\.0-9]+) %/.exec( data.toString() ) );
+
+		this.clearProgress().drawProgress( pDone );
+	}
+
+	, onChildExit : function( code ) {
 		if( code === 0 ){
 			// Success!
-			progressBar.tick( 100 );
+			this.clearProgress().success();
 			encode();
 
 		}else{
-			console.error( 'Unknown error encoding '.red + fPath.red.underline );
+			this.abandon( 'Unknown error encoding ' );
 			// Dunno
 		}
-	});
-}
+		this.exit();
+	}
+
+	, exit : function(){
+		console.log( '' );
+		return this;
+	}
+
+	, fail : function( msg ){
+		charm.foreground( 'red' ).write( ' ' + chrFail + ' ' + msg ).foreground( 'white' );
+		return this;
+	}
+
+	, success : function(){
+		charm.foreground( 'green' ).write( ' ' + chrOk + ' Success!' ).foreground( 'white' );
+		return this;
+	}
+
+	, abandon : function( msg ){
+		if( this.abandoned ){ return this; }
+		this.clearProgress();
+		this.encoder && this.encoder.kill();
+		this.removeOutfile();
+
+		// start next encoder -- nextTick in case abandon is called due to process.exit
+		process.nextTick( encode );
+		this.abandoned = true;
+
+		return this.fail( msg ).exit();
+	}
+
+	, removeOutfile : function(){
+		!program.keep && this.started && path.existsSync( this.outPath ) && fs.unlinkSync( this.outPath );
+		return this;
+	}
+};

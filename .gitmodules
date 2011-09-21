@@ -1,9 +1,9 @@
 [submodule "node_modules/commander"]
 	path = node_modules/commander
 	url = https://github.com/visionmedia/commander.js.git
-[submodule "node_modules/progress"]
-	path = node_modules/progress
-	url = https://github.com/visionmedia/node-progress.git
 [submodule "node_modules/colors"]
 	path = node_modules/colors
 	url = https://github.com/Marak/colors.js.git
+[submodule "node_modules/charm"]
+	path = node_modules/charm
+	url = https://github.com/substack/node-charm.git
