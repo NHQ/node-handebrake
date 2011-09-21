@@ -173,7 +173,7 @@ Number.prototype.toPercent = function(){
 	return (
 		 + ( 0|this )
 		 + '.'
-		 + (( 0|this%1*10 ) || '0' )
+		 + (( 0|this%1*100 ) || '0' )
 		 + '%'
 	);
 };
@@ -205,7 +205,7 @@ function Encoder( fPath ){
 	charm.write( 'Encoding: ' + this.inFile + ' ' );
 
 	if( this.inPath === this.outPath ){
-		return this.abandon( 'Infile & Outfile are the same' );
+		return this.abandon( 'Source & Destination are the same' );
 	}
 	if( !program.force && path.existsSync( this.outPath ) ){
 		return this.abandon( 'Destination file already exists' );
@@ -249,8 +249,8 @@ Encoder.prototype = {
 	, onChildExit : function( code ) {
 		if( code === 0 ){
 			// Success!
-			this.clearProgress().success();
-			encode();
+			this.clearProgress().removeInfile().success();
+			process.nextTick( encode );
 
 		}else{
 			this.abandon( 'Unknown error encoding ' );
@@ -289,6 +289,11 @@ Encoder.prototype = {
 
 	, removeOutfile : function(){
 		!program.keep && this.started && path.existsSync( this.outPath ) && fs.unlinkSync( this.outPath );
+		return this;
+	}
+
+	, removeInfile : function(){
+		progress.delete && path.existsSync( this.inPath ) && fs.unlinkSync( this.inPath );
 		return this;
 	}
 };
