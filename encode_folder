@@ -96,7 +96,7 @@ function die( msg ){
  **/
 function resolve( folder ){
 	if( folder.indexOf( '/' ) ){
-		folder = path.join( __dirname, folder );	
+		folder = path.join( process.cwd(), folder );	
 	}
 
 	if( path.existsSync( folder ) ){
