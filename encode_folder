@@ -293,7 +293,7 @@ Encoder.prototype = {
 	}
 
 	, removeInfile : function(){
-		progress.delete && path.existsSync( this.inPath ) && fs.unlinkSync( this.inPath );
+		program.delete && path.existsSync( this.inPath ) && fs.unlinkSync( this.inPath );
 		return this;
 	}
 };
