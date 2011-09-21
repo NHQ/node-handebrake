@@ -16,6 +16,12 @@ var       fs = require( 'fs' )
   , folder, progressBar, extRx, activeEncoder;
 
 /**
+ * Allow app to exit!
+ **/
+charm.on( '^C', process.exit );
+
+
+/**
  * Program Options
  **/
 program
