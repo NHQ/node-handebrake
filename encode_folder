@@ -173,7 +173,7 @@ Number.prototype.toPercent = function(){
 	return (
 		 + ( 0|this )
 		 + '.'
-		 + (( 0|this%1*100 ) || '0' )
+		 + ((( 0|this%1*100 ) || 0 ) + 100 ).toString().substr(1)
 		 + '%'
 	);
 };
